@@ -1,5 +1,11 @@
-cmake_minimum_required (VERSION 2.8)
+cmake_minimum_required (VERSION 3.10)
 project(diffraytracer)
+
+if(DEFINED ENV{CONDA_PREFIX})
+    include_directories($ENV{CONDA_PREFIX}/include)
+    include_directories($ENV{CONDA_PREFIX}/include/eigen3) # Add this line
+    link_directories($ENV{CONDA_PREFIX}/lib)
+endif()
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
