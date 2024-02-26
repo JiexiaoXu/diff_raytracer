@@ -14,7 +14,7 @@
 #include <Eigen/Dense>
 
 // replace the vec3
-using autodiff::real;
+using namespace autodiff;
 using vec3 = Eigen::Matrix<real, 3, 1>;
 
 // TODO: Add Loss Function 
@@ -22,15 +22,15 @@ using vec3 = Eigen::Matrix<real, 3, 1>;
 // TODO[optional]: Add Optimizer 
 
 struct Material {
-    float refractive_index = 1;
-    float albedo[4] = {2,0,0,0};
+    real refractive_index = 1;
+    real albedo[4] = {2,0,0,0};
     vec3 diffuse_color = {0,0,0};
-    float specular_exponent = 0;
+    real specular_exponent = 0;
 };
 
 struct Sphere {
     vec3 center;
-    float radius;
+    real radius;
     Material material;
 };
 
@@ -53,10 +53,10 @@ const vec3 lights[] = {
 };
 
 vec3 reflect(const vec3 &I, const vec3 &N) {
-    return I - N*2.f*(I*N);
+    return I - N*2.f*(I.dot(N));
 }
 
-vec3 refract(const vec3 &I, const vec3 &N, const float eta_t, const float eta_i=1.f) { // Snell's law
+vec3 refract(const vec3 &I, const vec3 &N, const real eta_t, const real eta_i=1.f) { // Snell's law
     real cosi = - max(real(-1), min(real(1), I.dot(N)));
     if (cosi<0) return refract(I, -N, eta_i, eta_t); // if the ray comes from the inside the object, swap the air and the media
     real eta = eta_i / eta_t;
@@ -83,7 +83,7 @@ std::tuple<bool,vec3,vec3,Material> scene_intersect(const vec3 &orig, const vec3
     real nearest_dist = 1e10;
     if (abs(dir.y())>.001) { // intersect the ray with the checkerboard, avoid division by zero
         real d = -(orig.y() + real(4)) / dir.y(); // the checkerboard plane has equation y = -4
-        vec3 p = orig + dir*d;
+        vec3 p = orig + dir * d;
         if (d>real(.001) && d<nearest_dist && abs(p.x())<real(10) && p.z()<real(-10) && p.z()>real(-30)) {
             nearest_dist = d;
             pt = p;
