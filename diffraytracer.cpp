@@ -3,6 +3,7 @@
 #include <fstream>
 #include <algorithm>
 #include <cmath>
+#include <iostream>
 
 // lib for saving pictures
 #define STB_IMAGE_WRITE_IMPLEMENTATION
@@ -16,6 +17,7 @@
 // replace the vec3
 using namespace autodiff;
 using vec3 = Eigen::Matrix<var, 3, 1>;
+using vec3f = Eigen::Matrix<float, 3, 1>;
 
 constexpr int   width  = 1024;
 constexpr int   height = 768;
@@ -44,10 +46,10 @@ const Material red_rubber = {1.0, {1.4,  0.3, 0.0, 0.0}, {0.3, 0.1, 0.1},   10.}
 const Material     mirror = {1.0, {0.0, 16.0, 0.8, 0.0}, {1.0, 1.0, 1.0}, 1425.};
 
 const Sphere spheres[] = {
-    // {{-3,    0,   -16}, 2,      ivory},
+    {{-3,    0,   -16}, 2,      ivory}
     // {{-1.0, -1.5, -12}, 2,      glass},
     // {{ 1.5, -0.5, -18}, 3, red_rubber},
-    {{ 7,    5,   -18}, 4,     mirror}
+    // {{ 7,    5,   -18}, 4,     mirror}
 };
 
 const vec3 lights[] = {
@@ -56,16 +58,18 @@ const vec3 lights[] = {
     { 30, 20,  30}
 };
 
-vec3 reflect(const vec3 &I, const vec3 &N) {
-    return I - N*2.f*(I.dot(N));
+template<typename T>
+Eigen::Matrix<T, 3, 1> reflect(const Eigen::Matrix<T, 3, 1> &I, const Eigen::Matrix<T, 3, 1> &N) {
+    return I - N * T(2) * (I.dot(N));
 }
 
-vec3 refract(const vec3 &I, const vec3 &N, const var eta_t, const var eta_i=1.f) { // Snell's law
-    var cosi = - max(-1, min(1, I.dot(N)));
-    if (cosi<0) return refract(I, -N, eta_i, eta_t); // if the ray comes from the inside the object, swap the air and the media
-    var eta = eta_i / eta_t;
-    var k = 1 - eta*eta*(1 - cosi*cosi);
-    return k<0 ? vec3{1,0,0} : I*eta + N*(eta*cosi - sqrt(k)); // k<0 = total reflection, no ray to refract. I refract it anyways, this has no physical meaning
+template<typename T>
+Eigen::Matrix<T, 3, 1> refract(const Eigen::Matrix<T, 3, 1> &I, const Eigen::Matrix<T, 3, 1> &N, const T eta_t, const T eta_i=1.f) { // Snell's law
+    T cosi = - max(-1, min(1, I.dot(N)));
+    if (cosi<0) return refract<T>(I, -N, eta_i, eta_t); // if the ray comes from the inside the object, swap the air and the media
+    T eta = eta_i / eta_t;
+    T k = 1 - eta*eta*(1 - cosi*cosi);
+    return k<0 ? Eigen::Matrix<T, 3, 1>{1,0,0} : I*eta + N*(eta*cosi - sqrt(k)); // k<0 = total reflection, no ray to refract. I refract it anyways, this has no physical meaning
 }
 
 std::tuple<bool,var> ray_sphere_intersect(const vec3 &orig, const vec3 &dir, const Sphere &s) { // ret value is a pair [intersection found, distance]
@@ -114,8 +118,8 @@ vec3 cast_ray(const vec3 &orig, const vec3 &dir, const int depth=0) {
     if (depth>4 || !hit)
         return {0.2, 0.7, 0.8}; // background color
 
-    vec3 reflect_dir = reflect(dir, N).normalized();
-    vec3 refract_dir = refract(dir, N, material.refractive_index).normalized();
+    vec3 reflect_dir = reflect<var>(dir, N).normalized();
+    vec3 refract_dir = refract<var>(dir, N, material.refractive_index).normalized();
     vec3 reflect_color = cast_ray(point, reflect_dir, depth + 1);
     vec3 refract_color = cast_ray(point, refract_dir, depth + 1);
 
@@ -125,7 +129,7 @@ vec3 cast_ray(const vec3 &orig, const vec3 &dir, const int depth=0) {
         auto [hit, shadow_pt, trashnrm, trashmat] = scene_intersect(point, light_dir);
         if (hit && (shadow_pt-point).norm() < (light-point).norm()) continue;
         diffuse_light_intensity  += max(0, light_dir.dot(N));
-        vec3 specular_reflect = reflect(-light_dir, N);
+        vec3 specular_reflect = reflect<var>(-light_dir, N);
         var specular_dot = -specular_reflect.dot(dir);
         var max_val = max(0, specular_dot);
         specular_light_intensity += pow(max_val, material.specular_exponent);
@@ -148,23 +152,29 @@ var loss_MSE(std::vector<unsigned char> img_X, std::vector<unsigned char> img_y)
     return loss;
 }
 
+// back propagate the gradients and update the parameters 
+void backpropagation() {
+
+}
+
 int main() {
-    std::vector<vec3> framebuffer(width*height);
+    std::vector<vec3f> framebuffer(width*height);
 #pragma omp parallel for
     for (int pix = 0; pix<width*height; pix++) { // actual rendering loop
         float dir_x =  (pix%width + 0.5) -  width/2.;
         float dir_y = -(pix/width + 0.5) + height/2.; // this flips the image at the same time
         float dir_z = -height/(2.*tan(fov/2.));
-        framebuffer[pix] = cast_ray(vec3{0,0,0}, vec3{dir_x, dir_y, dir_z}.normalized());
+        vec3 cast_res = cast_ray(vec3{0,0,0}, vec3{dir_x, dir_y, dir_z}.normalized());
+        framebuffer[pix] = vec3f{(float)val(cast_res.x()), (float)val(cast_res.y()), (float)val(cast_res.z())};
     }
 
     std::vector<unsigned char> image(width * height * 3); // 3 bytes per pixel for RGB
 
     for (int i = 0; i < width * height; ++i) {
         for (int chan = 0; chan < 3; ++chan) {
-            var max_val = max(1, max(framebuffer[i][0], max(framebuffer[i][1], framebuffer[i][2])));
-            var color_conversion = 255 * max(0, min(1, framebuffer[i][chan] / max_val));
-            image[i * 3 + chan] = static_cast<unsigned char>(val(color_conversion));
+            float max_val = std::max(1.0f, std::max(framebuffer[i][0], std::max(framebuffer[i][1], framebuffer[i][2])));
+            float color_conversion = 255 * std::max(0.0f, std::min(1.0f, framebuffer[i][chan] / max_val));
+            image[i * 3 + chan] = static_cast<unsigned char>(color_conversion);
         }
     }
 
