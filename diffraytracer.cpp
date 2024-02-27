@@ -40,9 +40,9 @@ const Material red_rubber = {1.0, {1.4,  0.3, 0.0, 0.0}, {0.3, 0.1, 0.1},   10.}
 const Material     mirror = {1.0, {0.0, 16.0, 0.8, 0.0}, {1.0, 1.0, 1.0}, 1425.};
 
 const Sphere spheres[] = {
-    {{-3,    0,   -16}, 2,      ivory},
-    {{-1.0, -1.5, -12}, 2,      glass},
-    {{ 1.5, -0.5, -18}, 3, red_rubber},
+    // {{-3,    0,   -16}, 2,      ivory},
+    // {{-1.0, -1.5, -12}, 2,      glass},
+    // {{ 1.5, -0.5, -18}, 3, red_rubber},
     {{ 7,    5,   -18}, 4,     mirror}
 };
 
@@ -127,6 +127,7 @@ vec3 cast_ray(const vec3 &orig, const vec3 &dir, const int depth=0) {
 }
 
 real loss(std::vector<unsigned char> imageX, std::vector<unsigned char> imagey) {
+
     return 0.0f;
 }
 
