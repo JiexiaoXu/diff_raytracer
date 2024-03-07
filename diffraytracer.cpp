@@ -3,6 +3,7 @@
 #include <fstream>
 #include <algorithm>
 #include <cmath>
+#include <iostream>
 
 // lib for saving pictures
 #define STB_IMAGE_WRITE_IMPLEMENTATION
@@ -19,6 +20,7 @@ struct vec3 {
     vec3  operator-()              const { return {-x, -y, -z};          }
     float norm() const { return std::sqrt(x*x+y*y+z*z); }
     vec3 normalized() const { return (*this)*(1.f/norm()); }
+    // std::string toString() const{}
 };
 
 vec3 cross(const vec3 v1, const vec3 v2) {
@@ -30,11 +32,23 @@ struct Material {
     float albedo[4] = {2,0,0,0};
     vec3 diffuse_color = {0,0,0};
     float specular_exponent = 0;
+    void toString() const {
+        std::cout << "refractive_index "  << refractive_index << std::endl;
+        std::cout << "diffuse color " << diffuse_color.x << std::endl;
+        std::cout << "specular exponent " << specular_exponent << std::endl;
+    }
 };
 
 struct Sphere {
     vec3 center;
     float radius;
+    Material material;
+};
+
+struct Triangle {
+    vec3 p1;
+    vec3 p2;
+    vec3 p3;
     Material material;
 };
 
@@ -44,10 +58,14 @@ constexpr Material red_rubber = {1.0, {1.4,  0.3, 0.0, 0.0}, {0.3, 0.1, 0.1},   
 constexpr Material     mirror = {1.0, {0.0, 16.0, 0.8, 0.0}, {1.0, 1.0, 1.0}, 1425.};
 
 constexpr Sphere spheres[] = {
-    {{-3,    0,   -16}, 2,      ivory},
-    {{-1.0, -1.5, -12}, 2,      glass},
-    {{ 1.5, -0.5, -18}, 3, red_rubber},
-    {{ 7,    5,   -18}, 4,     mirror}
+    // {{-3,    0,   -16}, 2,      ivory},
+    // {{-1.0, -1.5, -12}, 2,      glass},
+    // {{ 1.5, -0.5, -18}, 3, red_rubber},
+    // {{ 7,    5,   -18}, 4,     mirror}
+};
+
+constexpr Triangle triangles[] = {
+    {{-3, 0, -16}, {-1.0, -1.5, -12},{1.5, -0.5, -18}, ivory}
 };
 
 constexpr vec3 lights[] = {
@@ -80,6 +98,42 @@ std::tuple<bool,float> ray_sphere_intersect(const vec3 &orig, const vec3 &dir, c
     return {false, 0};
 }
 
+// return tuple of (boolean hit, float hit_time, vec normal)
+std::tuple<bool, float, vec3> ray_triangle_intersect(const vec3 &orig, const vec3 &dir, const Triangle &t) {
+    float u, v;  // barycentric coordinates, last one is (1 - u - v)
+	float time;  // time for line pass through triangle
+	vec3 e1 = t.p2 - t.p1;
+	vec3 e2 = t.p3 - t.p1;
+    
+    vec3 p = cross(dir, e2);
+	float divisor = p*e1;
+	if (std::abs(divisor) < (float)1e-6) { // check if parallel
+		return {false, 0, vec3()};
+	}
+
+    vec3 s = orig - t.p1;
+	float cramer_factor = 1.0f / divisor;
+	// u = cramer_factor * ((-1.0f) * dot(cross(s, e2), d));
+	u = cramer_factor * (s * p);
+	if (u < (float)1e-6 || u > 1.0f) {
+		return {false, 0, vec3()};
+	}
+
+	// v = cramer_factor * dot(cross(e1, d), s);
+	v = cramer_factor * (cross(s, e1) * dir);
+	if (v < (float)1e-6 || u + v > 1.0f) {
+		return {false, 0, vec3()};
+	}
+
+	time = cramer_factor * (e2 * cross(s, e1));
+    if (time < 0) {
+        return {false, 0, vec3()};
+    }
+
+    vec3 N = cross(e1, e2);   
+    return {true, time, N.normalized()};
+}
+
 std::tuple<bool,vec3,vec3,Material> scene_intersect(const vec3 &orig, const vec3 &dir) {
     vec3 pt, N;
     Material material;
@@ -96,19 +150,30 @@ std::tuple<bool,vec3,vec3,Material> scene_intersect(const vec3 &orig, const vec3
         }
     }
 
-    for (const Sphere &s : spheres) { // intersect the ray with all spheres
-        auto [intersection, d] = ray_sphere_intersect(orig, dir, s);
+    // for (const Sphere &s : spheres) { // intersect the ray with all spheres
+    //     auto [intersection, d] = ray_sphere_intersect(orig, dir, s);
+    //     if (!intersection || d > nearest_dist) continue;
+    //     nearest_dist = d;
+    //     pt = orig + dir*nearest_dist;
+    //     N = (pt - s.center).normalized();
+    //     material = s.material;
+    // }
+
+    for (const Triangle &t : triangles) {
+        auto [intersection, d, normal] = ray_triangle_intersect(orig, dir, t);
         if (!intersection || d > nearest_dist) continue;
         nearest_dist = d;
         pt = orig + dir*nearest_dist;
-        N = (pt - s.center).normalized();
-        material = s.material;
+        N = normal;
+        material = t.material;
     }
+
     return { nearest_dist<1000, pt, N, material };
 }
 
 vec3 cast_ray(const vec3 &orig, const vec3 &dir, const int depth=0) {
     auto [hit, point, N, material] = scene_intersect(orig, dir);
+    
     if (depth>4 || !hit)
         return {0.2, 0.7, 0.8}; // background color
 
@@ -120,12 +185,17 @@ vec3 cast_ray(const vec3 &orig, const vec3 &dir, const int depth=0) {
     float diffuse_light_intensity = 0, specular_light_intensity = 0;
     for (const vec3 &light : lights) { // checking if the point lies in the shadow of the light
         vec3 light_dir = (light - point).normalized();
-        auto [hit, shadow_pt, trashnrm, trashmat] = scene_intersect(point, light_dir);
+        auto [hit, shadow_pt, trashnrm, trashmat] = scene_intersect(point + light_dir * 0.1f, light_dir);
         if (hit && (shadow_pt-point).norm() < (light-point).norm()) continue;
         diffuse_light_intensity  += std::max(0.f, light_dir*N);
         specular_light_intensity += std::pow(std::max(0.f, -reflect(-light_dir, N)*dir), material.specular_exponent);
     }
-    return material.diffuse_color * diffuse_light_intensity * material.albedo[0] + vec3{1., 1., 1.}*specular_light_intensity * material.albedo[1] + reflect_color*material.albedo[2] + refract_color*material.albedo[3];
+    vec3 diffuse_color = material.diffuse_color * diffuse_light_intensity * material.albedo[0];
+    vec3 specular_color = vec3{1., 1., 1.}*specular_light_intensity * material.albedo[1];
+    vec3 reflect_color_res = reflect_color*material.albedo[2];
+    vec3 refract_color_res =  refract_color*material.albedo[3];
+
+    return diffuse_color + specular_color + reflect_color_res + refract_color_res;
 }
 
 int main() {
@@ -138,7 +208,11 @@ int main() {
         float dir_x =  (pix%width + 0.5) -  width/2.;
         float dir_y = -(pix/width + 0.5) + height/2.; // this flips the image at the same time
         float dir_z = -height/(2.*tan(fov/2.));
-        framebuffer[pix] = cast_ray(vec3{0,0,0}, vec3{dir_x, dir_y, dir_z}.normalized());
+        vec3 pix_color = cast_ray(vec3{0,0,0}, vec3{dir_x, dir_y, dir_z}.normalized());
+        pix_color.x = std::clamp(pix_color.x, 0.0f, 1.0f);
+        pix_color.y = std::clamp(pix_color.y, 0.0f, 1.0f);
+        pix_color.z = std::clamp(pix_color.z, 0.0f, 1.0f);
+        framebuffer[pix] = pix_color ;
     }
 
     std::vector<unsigned char> image(width * height * 3); // 3 bytes per pixel for RGB
@@ -151,7 +225,7 @@ int main() {
     }
 
     // Save the image using stb_image_write
-    stbi_write_png("output.png", width, height, 3, image.data(), width * 3);
+    stbi_write_png("triangle.png", width, height, 3, image.data(), width * 3);
     return 0;
 }
 
