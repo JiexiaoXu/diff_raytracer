@@ -280,7 +280,7 @@ int main() {
     //////////////// Start Timing //////////////////////////
     // Load or define your target image    
     int channel, width, height;
-    unsigned char* target_image = stbi_load("output.png", &width, &height, &channel, 0);
+    unsigned char* target_image = stbi_load("triangle.png", &width, &height, &channel, 0);
     
     if (target_image == nullptr) {
         printf("Error in loading the image\n");
@@ -313,7 +313,7 @@ int main() {
 
         // Save the image using stb_image_write
         std::string pic_name = "output_" + std::to_string(i) + ".png";
-        stbi_write_png("output.png", width, height, 3, image.data(), width * 3);
+        stbi_write_png(pic_name.c_str(), width, height, 3, image.data(), width * 3);
     }
     ///////////////// finish up the timing ////////////////////
 
