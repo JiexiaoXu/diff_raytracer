@@ -32,19 +32,13 @@ constexpr float fov    = 1.05; // 60 degrees field of view in radians
 // define the primitives 
 struct Material {
     double refractive_index  = 1;
-    double albedo[4]         = {2,0,0,0};
-    vec3const diffuse_color      = {0,0,0};
+    double albedo[4]         = {1,0,0,0};
+    vec3const diffuse_color  = {0,0,0};
     double specular_exponent = 0;
 
     Material operator*(const double k) const {
         Material result = *this; // Make a copy of the current material
-        result.refractive_index *= k;
-        for (int i = 0; i < 4; i++) {
-            result.albedo[i] *= k;
-        }
-        // Assuming 'vec3' has an overloaded operator* for scalar multiplication
-        result.diffuse_color = this->diffuse_color * k;
-        result.specular_exponent *= k;
+        result.albedo[3] = k;
         return result;
     };
 };
@@ -68,7 +62,7 @@ struct Triangle {
     }
 };
 
-Material      ivory = {1.0, {0.9,  0.5, 0.1, 0.0}, {0.4, 0.4, 0.3},   50.};
+Material      ivory = {1.0, {1.0,  0.0, 0.0, 0.0}, {0.4, 0.4, 0.3},   50.};
 // const Material      glass = {1.5, {0.0,  0.9, 0.1, 0.8}, {0.6, 0.7, 0.8},  125.};
 // const Material red_rubber = {1.0, {1.4,  0.3, 0.0, 0.0}, {0.3, 0.1, 0.1},   10.};
 // const Material     mirror = {1.0, {0.0, 16.0, 0.8, 0.0}, {1.0, 1.0, 1.0}, 1425.};
@@ -118,12 +112,11 @@ std::tuple<var, var, vec3> ray_triangle_intersect(const vec3 &orig, const vec3 &
     vec3 s = orig - t.p1;
 	var cramer_factor = 1.0f / divisor;
 
-
 	u = cramer_factor * s.dot(p);
     v = cramer_factor * dir.dot(s.cross(e1));
     var uv_comp = min(u, v);
     var bary_min = min(uv_comp, (1-u-v)) * 3;
-	if (u < (var)1e-6 || u > 1.0f || v < (var)1e-6 || u + v > 1.0f) {
+	if (u < (var)1e-6 || v < (var)1e-6 || u + v > 1.0f) {
 		return {0, 0, vec3()};
 	}
 	
@@ -159,16 +152,19 @@ std::tuple<bool,vec3,vec3,Material> scene_intersect(const vec3 &orig, const vec3
         pt = orig + dir*nearest_dist;
         N = normal;
         material = t.material * val(intersection);
+        if (val(intersection) > 1e-6) {
+            std::cout << "intersection " << val(intersection) << std::endl;
+        }
     }
     return { nearest_dist<1000, pt, N, material };
 }
 
 vec3 cast_ray(const vec3 &orig, const vec3 &dir, const int depth=0) {
     // TODO: make cast_ray differentiable 
-    if (depth == 2) return vec3{0.2, 0.7, 0.8};
+    if (depth == 1) return vec3{0.2, 0.7, 0.8};
 
     auto [hit, point, N, material] = scene_intersect(orig, dir);
-    if (hit == 0) return vec3{0.2, 0.7, 0.8}; // background color
+    if (hit <= 1e-5) return vec3{0.2, 0.7, 0.8}; // background color
 
     // Calculate reflection and refraction only if necessary
     vec3 reflect_dir, refract_dir;
@@ -209,6 +205,7 @@ var loss_MSE(std::vector<vec3> img_X, std::vector<vec3> img_y, int width, int he
     }
 
     loss /= width * height;
+    std::cout << "loss is " << loss << std::endl;
     return loss;
 }
 
@@ -235,7 +232,7 @@ void train(std::vector<vec3>& framebuffer, const std::vector<vec3> target_fb, in
         float dir_y = -(pix/width + 0.5) + height/2.; // this flips the image at the same time
         float dir_z = -height/(2.*tan(fov/2.));
         vec3 cast_res = cast_ray(vec3{0,0,0}, vec3{dir_x, dir_y, dir_z}.normalized());
-        framebuffer[pix] = vec3{cast_res.x(), cast_res.y(), cast_res.z()};
+        framebuffer[pix] = cast_res;
 
         if (pix % 100 == 0) {
         #pragma omp critical
@@ -268,7 +265,7 @@ int main() {
     //////////////// Start Timing //////////////////////////
     // Load or define your target image    
     int channel, width, height;
-    unsigned char* target_image = stbi_load("triangle100c.png", &width, &height, &channel, 0);
+    unsigned char* target_image = stbi_load("triangle20.png", &width, &height, &channel, 0);
     std::cout << width << "  AND  " << height << std::endl;
     if (target_image == nullptr) {
         printf("Error in loading the image\n");
@@ -284,7 +281,7 @@ int main() {
 
     std::vector<vec3> framebuffer(width*height);
 
-    int iteration = 3;
+    int iteration = 1;
     for (int i = 0; i < iteration; i++) {
         triangles[0].toString();
         train(framebuffer, target_framebuffer, width, height, i);
