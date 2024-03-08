@@ -35,6 +35,18 @@ struct Material {
     double albedo[4]         = {2,0,0,0};
     vec3const diffuse_color      = {0,0,0};
     double specular_exponent = 0;
+
+    Material operator*(const double k) const {
+        Material result = *this; // Make a copy of the current material
+        result.refractive_index *= k;
+        for (int i = 0; i < 4; i++) {
+            result.albedo[i] *= k;
+        }
+        // Assuming 'vec3' has an overloaded operator* for scalar multiplication
+        result.diffuse_color = this->diffuse_color * k;
+        result.specular_exponent *= k;
+        return result;
+    };
 };
 
 // struct Sphere {
@@ -48,9 +60,15 @@ struct Triangle {
     vec3 p2;
     vec3 p3;
     Material material;
+
+    void toString() const {
+        std::cout << "p1 (" << val(p1.x()) << " " << val(p1.y()) << " " << val(p1.z()) << ")" << std::endl;
+        std::cout << "p2 (" << val(p2.x()) << " " << val(p2.y()) << " " << val(p2.z()) << ")" << std::endl;
+        std::cout << "p3 (" << val(p3.x()) << " " << val(p3.y()) << " " << val(p3.z()) << ")" << std::endl; 
+    }
 };
 
-const Material      ivory = {1.0, {0.9,  0.5, 0.1, 0.0}, {0.4, 0.4, 0.3},   50.};
+Material      ivory = {1.0, {0.9,  0.5, 0.1, 0.0}, {0.4, 0.4, 0.3},   50.};
 // const Material      glass = {1.5, {0.0,  0.9, 0.1, 0.8}, {0.6, 0.7, 0.8},  125.};
 // const Material red_rubber = {1.0, {1.4,  0.3, 0.0, 0.0}, {0.3, 0.1, 0.1},   10.};
 // const Material     mirror = {1.0, {0.0, 16.0, 0.8, 0.0}, {1.0, 1.0, 1.0}, 1425.};
@@ -85,7 +103,7 @@ vec3 refract(const vec3 &I, const vec3 &N, const var eta_t, const var eta_i=1.f)
     return k<0 ? vec3{1,0,0} : I*eta + N*(eta*cosi - sqrt(k)); // k<0 = total reflection, no ray to refract. I refract it anyways, this has no physical meaning
 }
 
-std::tuple<bool, var, vec3> ray_triangle_intersect(const vec3 &orig, const vec3 &dir, const Triangle &t) {
+std::tuple<var, var, vec3> ray_triangle_intersect(const vec3 &orig, const vec3 &dir, const Triangle &t) {
     var u, v;  // barycentric coordinates, last one is (1 - u - v)
 	var time;  // time for line pass through triangle
 	vec3 e1 = t.p2 - t.p1;
@@ -94,30 +112,29 @@ std::tuple<bool, var, vec3> ray_triangle_intersect(const vec3 &orig, const vec3 
     vec3 p = dir.cross(e2);
 	var divisor = p.dot(e1);
 	if (abs(divisor) < 1e-6) { // check if parallel
-		return {false, 0, vec3()};
+		return {0, 0, vec3()};
 	}
 
     vec3 s = orig - t.p1;
 	var cramer_factor = 1.0f / divisor;
-	// u = cramer_factor * ((-1.0f) * dot(cross(s, e2), d));
-	u = cramer_factor * s.dot(p);
-	if (u < (var)1e-6 || u > 1.0f) {
-		return {false, 0, vec3()};
-	}
 
-	// v = cramer_factor * dot(cross(e1, d), s);
-	v = cramer_factor * dir.dot(s.cross(e1));
-	if (v < (var)1e-6 || u + v > 1.0f) {
-		return {false, 0, vec3()};
+
+	u = cramer_factor * s.dot(p);
+    v = cramer_factor * dir.dot(s.cross(e1));
+    var uv_comp = min(u, v);
+    var bary_min = min(uv_comp, (1-u-v)) * 3;
+	if (u < (var)1e-6 || u > 1.0f || v < (var)1e-6 || u + v > 1.0f) {
+		return {0, 0, vec3()};
 	}
+	
 
 	time = cramer_factor * (e2.dot(s.cross(e1)));
     if (time < 0) {
-        return {false, 0, vec3()};
+        return {0, 0, vec3()};
     }
 
     vec3 N = e1.cross(e2);   
-    return {true, time, N.normalized()};
+    return {bary_min, time, N.normalized()};
 }
 
 std::tuple<bool,vec3,vec3,Material> scene_intersect(const vec3 &orig, const vec3 &dir) {
@@ -138,13 +155,11 @@ std::tuple<bool,vec3,vec3,Material> scene_intersect(const vec3 &orig, const vec3
 
     for (const Triangle &t : triangles) {
         auto [intersection, d, normal] = ray_triangle_intersect(orig, dir, t);
-        if (!intersection || d > nearest_dist) continue;
-        nearest_dist = val(d);
+        if (d < nearest_dist) nearest_dist = val(d);
         pt = orig + dir*nearest_dist;
         N = normal;
-        material = t.material;
+        material = t.material * val(intersection);
     }
-
     return { nearest_dist<1000, pt, N, material };
 }
 
@@ -153,7 +168,7 @@ vec3 cast_ray(const vec3 &orig, const vec3 &dir, const int depth=0) {
     if (depth == 2) return vec3{0.2, 0.7, 0.8};
 
     auto [hit, point, N, material] = scene_intersect(orig, dir);
-    if (!hit) return vec3{0.2, 0.7, 0.8}; // background color
+    if (hit == 0) return vec3{0.2, 0.7, 0.8}; // background color
 
     // Calculate reflection and refraction only if necessary
     vec3 reflect_dir, refract_dir;
@@ -169,7 +184,7 @@ vec3 cast_ray(const vec3 &orig, const vec3 &dir, const int depth=0) {
     for (const vec3 &light : lights) {
         vec3 light_dir = (light - point).normalized(); // Cast point to double
         auto [hit, shadow_pt, trashnrm, trashmat] = scene_intersect(point, light_dir); // Ensure scene_intersect can handle var for differentiation
-        if (hit && (shadow_pt - point).norm() < (light - point).norm()) continue;
+        if (hit != 0 && (shadow_pt - point).norm() < (light - point).norm()) continue;
 
         diffuse_light_intensity += max(0.0, light_dir.dot(N)); // Cast N to double
         vec3 specular_reflect = reflect(-light_dir, N); // Reflect needs N as double
@@ -213,7 +228,7 @@ void backpropagation(Triangle &t, const std::vector<vec3> &img_X, const std::vec
 
 
 // inverse rendering training process
-void train(std::vector<vec3>& framebuffer, const std::vector<vec3> target_fb, int width, int height) {
+void train(std::vector<vec3>& framebuffer, const std::vector<vec3> target_fb, int width, int height, int i) {
 #pragma omp parallel for
     for (int pix = 0; pix<width*height; pix++) { // actual rendering loop
         float dir_x =  (pix%width + 0.5) -  width/2.;
@@ -226,9 +241,23 @@ void train(std::vector<vec3>& framebuffer, const std::vector<vec3> target_fb, in
         #pragma omp critical
             std::cout << "Progress: " << pix << " of " << width*height << std::endl;
         }
+
+        std::vector<unsigned char> image(width * height * 3);
+
+        for (int i = 0; i < width * height; ++i) {
+            for (int chan = 0; chan < 3; ++chan) {
+                float max_val = std::max(1.0, std::max(val(framebuffer[i][0]), std::max(val(framebuffer[i][1]), val(framebuffer[i][2]))));
+                float color_conversion = 255 * std::max(0.0, std::min(1.0, val(framebuffer[i][chan]) / max_val));
+                image[i * 3 + chan] = static_cast<unsigned char>(color_conversion);
+            }
+        }
+
+        // Save the image using stb_image_write
+        std::string pic_name = "output_" + std::to_string(i) + ".png";
+        stbi_write_png(pic_name.c_str(), width, height, 3, image.data(), width * 3);
     }
 
-    float learningRate = 1.0; // Setting this to 0.01, but change based on speed and accuracy
+    float learningRate = 1e4; // Setting this to 0.01, but change based on speed and accuracy
     backpropagation(triangles[0], framebuffer, target_fb, learningRate, width, height); // spheres[0] is the sphere we're trying to render
 }
 
@@ -239,8 +268,8 @@ int main() {
     //////////////// Start Timing //////////////////////////
     // Load or define your target image    
     int channel, width, height;
-    unsigned char* target_image = stbi_load("triangle.png", &width, &height, &channel, 0);
-    
+    unsigned char* target_image = stbi_load("triangle100c.png", &width, &height, &channel, 0);
+    std::cout << width << "  AND  " << height << std::endl;
     if (target_image == nullptr) {
         printf("Error in loading the image\n");
         exit(1);
@@ -257,22 +286,9 @@ int main() {
 
     int iteration = 3;
     for (int i = 0; i < iteration; i++) {
-        train(framebuffer, target_framebuffer, width, height);
+        triangles[0].toString();
+        train(framebuffer, target_framebuffer, width, height, i);
         std::cout << "iteration " << i << " out of " << iteration << std::endl;
-        
-        std::vector<unsigned char> image(width * height * 3);
-
-        for (int i = 0; i < width * height; ++i) {
-            for (int chan = 0; chan < 3; ++chan) {
-                float max_val = std::max(1.0, std::max(val(framebuffer[i][0]), std::max(val(framebuffer[i][1]), val(framebuffer[i][2]))));
-                float color_conversion = 255 * std::max(0.0, std::min(1.0, val(framebuffer[i][chan]) / max_val));
-                image[i * 3 + chan] = static_cast<unsigned char>(color_conversion);
-            }
-        }
-
-        // Save the image using stb_image_write
-        std::string pic_name = "output_" + std::to_string(i) + ".png";
-        stbi_write_png(pic_name.c_str(), width, height, 3, image.data(), width * 3);
     }
     ///////////////// finish up the timing ////////////////////
 
