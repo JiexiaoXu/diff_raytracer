@@ -38,7 +38,7 @@ struct Material {
 
     Material operator*(const double k) const {
         Material result = *this; // Make a copy of the current material
-        result.albedo[3] = k;
+        result.albedo[3] = (1-k);
         return result;
     };
 };
@@ -68,7 +68,7 @@ Material      ivory = {1.0, {1.0,  0.0, 0.0, 0.0}, {0.4, 0.4, 0.3},   50.};
 // const Material     mirror = {1.0, {0.0, 16.0, 0.8, 0.0}, {1.0, 1.0, 1.0}, 1425.};
 
 Triangle triangles[] = {
-    {{-3, 0, -16}, {-1.0, -1.5, -12},{1.5, -0.5, -18}, ivory}
+    {{-15, 0, -16}, {4, -6.5, -12},{3.5, -0.5, -23}, ivory},
 };
 
 vec3const lights[] = {
@@ -179,8 +179,8 @@ vec3 cast_ray(const vec3 &orig, const vec3 &dir, const int depth=0) {
     var diffuse_light_intensity = 0, specular_light_intensity = 0;
     for (const vec3 &light : lights) {
         vec3 light_dir = (light - point).normalized(); // Cast point to double
-        auto [hit, shadow_pt, trashnrm, trashmat] = scene_intersect(point, light_dir); // Ensure scene_intersect can handle var for differentiation
-        if (hit != 0 && (shadow_pt - point).norm() < (light - point).norm()) continue;
+        auto [hit, shadow_pt, trashnrm, trashmat] = scene_intersect(point + light_dir * 0.1f, light_dir); // Ensure scene_intersect can handle var for differentiation
+        if (hit > 1e-5 && (shadow_pt - point).norm() < (light - point).norm()) continue;
 
         diffuse_light_intensity += max(0.0, light_dir.dot(N)); // Cast N to double
         vec3 specular_reflect = reflect(-light_dir, N); // Reflect needs N as double
@@ -209,18 +209,35 @@ var loss_MSE(std::vector<vec3> img_X, std::vector<vec3> img_y, int width, int he
     return loss;
 }
 
+var loss_PSNR(std::vector<vec3> img_X, std::vector<vec3> img_y, int width, int height) {
+    var mse_loss = loss_MSE(img_X, img_y, width, height);
+    var MAX_PSNR = 0;
+
+    for (int i = 0; i < width * height; ++i) {
+        if (img_y[i].norm() > MAX_PSNR) {
+            MAX_PSNR = img_y[i].norm();
+        }
+    }
+
+    return 20 * log10(MAX_PSNR) - 10 * log10(mse_loss); 
+}
+
 void backpropagation(Triangle &t, const std::vector<vec3> &img_X, const std::vector<vec3> &img_y, float learning_rate, int width, int height) {
-    auto loss = loss_MSE(img_X, img_y, width, height);
+    auto loss = loss_PSNR(img_X, img_y, width, height);
 
     // Compute gradients
-    auto dp1 = gradient(loss, t.p1);
-    auto dp2 = gradient(loss, t.p2);
-    auto dp3 = gradient(loss, t.p3);
+    vec3 dp1 = gradient(loss, t.p1);
+    vec3 dp2 = gradient(loss, t.p2);
+    vec3 dp3 = gradient(loss, t.p3);
 
     // Update parameters
     t.p1 -= learning_rate * dp1;
     t.p2 -= learning_rate * dp2;
     t.p3 -= learning_rate * dp3;
+
+    std::cout << "dp1 x " << dp1.x() << std::endl;
+    // std::cout << "dp1 y " << dp1.y << std::endl;
+    // std::cout << "dp1 z " << dp1.z << std::endl;
 }
 
 
@@ -243,8 +260,7 @@ void train(std::vector<vec3>& framebuffer, const std::vector<vec3> target_fb, in
 
         for (int i = 0; i < width * height; ++i) {
             for (int chan = 0; chan < 3; ++chan) {
-                float max_val = std::max(1.0, std::max(val(framebuffer[i][0]), std::max(val(framebuffer[i][1]), val(framebuffer[i][2]))));
-                float color_conversion = 255 * std::max(0.0, std::min(1.0, val(framebuffer[i][chan]) / max_val));
+                int color_conversion = (std::max(0.0, std::min(255.0,  255 * val(framebuffer[i][chan]))));
                 image[i * 3 + chan] = static_cast<unsigned char>(color_conversion);
             }
         }
@@ -254,7 +270,7 @@ void train(std::vector<vec3>& framebuffer, const std::vector<vec3> target_fb, in
         stbi_write_png(pic_name.c_str(), width, height, 3, image.data(), width * 3);
     }
 
-    float learningRate = 1e4; // Setting this to 0.01, but change based on speed and accuracy
+    float learningRate = 1e5; // Setting this to 0.01, but change based on speed and accuracy
     backpropagation(triangles[0], framebuffer, target_fb, learningRate, width, height); // spheres[0] is the sphere we're trying to render
 }
 
@@ -265,7 +281,7 @@ int main() {
     //////////////// Start Timing //////////////////////////
     // Load or define your target image    
     int channel, width, height;
-    unsigned char* target_image = stbi_load("triangle20.png", &width, &height, &channel, 0);
+    unsigned char* target_image = stbi_load("triangle20c.png", &width, &height, &channel, 0);
     std::cout << width << "  AND  " << height << std::endl;
     if (target_image == nullptr) {
         printf("Error in loading the image\n");
@@ -281,7 +297,7 @@ int main() {
 
     std::vector<vec3> framebuffer(width*height);
 
-    int iteration = 1;
+    int iteration = 3;
     for (int i = 0; i < iteration; i++) {
         triangles[0].toString();
         train(framebuffer, target_framebuffer, width, height, i);
